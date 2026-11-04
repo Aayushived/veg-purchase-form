@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Vegetable Purchases</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <style>
+    :root { color-scheme: light; --green:#137a55; --tint:#e8f5ee; --border:#dfe8e1; --ink:#1b2e26; --sub:#5d6c64; }
+    * { box-sizing:border-box; }
+    body { margin:0; font:16px/1.45 system-ui,-apple-system,Segoe UI,Arial,sans-serif; color:var(--ink); background:#f7faf8; }
+    .wrap { max-width:720px; margin:auto; padding:20px 15px 34px; }
+    h1 { margin:0 0 5px; font-size:24px; }
+    .sub { color:var(--sub); margin:0 0 18px; font-size:14px; }
+    .panel { background:white; border:1px solid var(--border); border-radius:17px; padding:16px; margin-bottom:13px; }
+    label.title { display:block; font-weight:700; margin-bottom:8px; }
+    input[type=search], input[type=number] { width:100%; min-height:43px; border:1px solid #cbd6ce; border-radius:10px; padding:9px 10px; background:#fff; font:inherit; }
+    input:focus { outline:2px solid #5cae85; outline-offset:1px; }
+    .choices { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; max-height:290px; overflow:auto; margin-top:12px; }
+    .choice { border:1px solid var(--border); background:#fff; border-radius:11px; padding:10px 8px; text-align:left; font:inherit; font-size:14px; cursor:pointer; }
+    .choice.active { color:#075b3e; background:var(--tint); border-color:var(--green); font-weight:650; }
+    .item { padding:12px 0; border-bottom:1px solid var(--border); }
+    .item:last-child { border-bottom:0; }
+    .itemhead { display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; gap:8px; }
+    .fields { display:grid; grid-template-columns:1fr 1fr; gap:11px; }
+    .fields label { color:var(--sub); font-size:12px; font-weight:600; }
+    .fields label input { margin-top:4px; font-size:16px; }
+    .remove { background:transparent; color:#aa3535; border:0; font:inherit; cursor:pointer; }
+    .total { display:flex; align-items:center; justify-content:space-between; font-size:18px; font-weight:750; margin-bottom:13px; }
+    .total strong { font-size:25px; color:var(--green); }
+    .save { border:0; background:var(--green); color:white; width:100%; min-height:50px; border-radius:12px; font:inherit; font-weight:750; cursor:pointer; }
+    .save:disabled { opacity:.5; cursor:not-allowed; }
+    .hint { color:var(--sub); font-size:13px; }
+    .status { font-size:13px; margin-top:10px; min-height:18px; }
+    .empty { color:var(--sub); text-align:center; padding:19px 6px; }
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <h1 id="heading">🛒 Today's purchases</h1>
+  <p class="sub" id="intro">Select vegetables, enter kilograms and total cost, then save everything together.</p>
+  <section class="panel">
+    <label class="title" for="search" id="selectLabel">1. Select vegetables</label>
+    <input id="search" type="search" autocomplete="off" placeholder="Search vegetables…">
+    <div id="choices" class="choices"></div>
+  </section>
+  <section class="panel">
+    <label class="title" id="detailLabel">2. Quantity and total price</label>
+    <div id="items"><div class="empty" id="empty">Choose vegetables above to begin.</div></div>
+  </section>
+  <section class="panel">
+    <div class="total"><span id="totalLabel">Total</span><strong id="total">₹0</strong></div>
+    <button id="save" class="save" disabled>Save all purchases</button>
+    <div id="status" class="status" role="status" aria-live="polite"></div>
+    <p class="hint" id="hint">This form sends one purchase batch through Telegram. Only the bot can write to your private Google Sheet.</p>
+  </section>
+</div>
+<script>
+(() => {
+  'use strict';
+  const tg=window.Telegram?.WebApp;
+  const langs=['en','mr','hi','gu'];
+  const qs=new URLSearchParams(location.search);
+  let lang=qs.get('lang')||'en'; if(!langs.includes(lang)) lang='en';
+  const langIndex={en:1,mr:2,hi:3,gu:4};
+  const catalog=[
+    ['tomato','🍅 Tomato','टोमॅटो','टमाटर','ટામેટાં'],
+    ['potato','🥔 Potato','बटाटा','आलू','બટાકા'],
+    ['onion','🧅 Onion','कांदा','प्याज','ડુંગળી'],
+    ['cabbage','🥬 Cabbage','कोबी','पत्ता गोभी','કોબી'],
+    ['cauliflower','🥦 Cauliflower','फ्लॉवर','फूलगोभी','ફૂલકોબી'],
+    ['carrot','🥕 Carrot','गाजर','गाजर','ગાજર'],
+    ['brinjal','🍆 Brinjal','वांगी','बैंगन','રીંગણ'],
+    ['chilli','🌶️ Chilli','मिरची','मिर्च','મરચાં'],
+    ['cucumber','🥒 Cucumber','काकडी','खीरा','કાકડી'],
+    ['spinach','🥬 Spinach','पालक','पालक','પાલક'],
+    ['okra','🌱 Okra','भेंडी','भिंडी','ભીંડા'],
+    ['peas','🫛 Peas','वाटाणा','मटर','વટાણા'],
+    ['capsicum','🫑 Capsicum','ढोबळी मिरची','शिमला मिर्च','શિમલા મરચાં'],
+    ['pumpkin','🎃 Pumpkin','भोपळा','कद्दू','કોળું'],
+    ['radish','🌱 Radish','मुळा','मूली','મૂળા'],
+    ['beans','🫘 Beans','फरसबी','फली','ફણસી'],
+    ['bittergourd','🥒 Bitter gourd','कारले','करेला','કારેલા'],
+    ['bottlegourd','🥒 Bottle gourd','दुधी भोपळा','लौकी','દૂધી'],
+    ['garlic','🧄 Garlic','लसूण','लहसुन','લસણ'],
+    ['ginger','🫚 Ginger','आले','अदरक','આદુ']
+  ];
+  const texts={
+    en:['🛒 Today’s purchases','Select vegetables, enter quantities and total costs, then save together.','1. Select vegetables','Search vegetables…','2. Quantity and total price','Choose vegetables above to begin.','kg','Total paid (₹)','Total','Save all purchases','Open this form using the button inside your Telegram bot.','Enter quantity and cost for every selected vegetable.','No vegetables selected.','Saving through Telegram…','Telegram will send the purchase list to your bot.','This is a static form. The records are saved by the bot in Google Sheets.'],
+    mr:['🛒 आजची खरेदी','भाज्या निवडा, किलो व एकूण किंमत भरा आणि सर्व एकत्र जतन करा.','१. भाज्या निवडा','भाजी शोधा…','२. वजन आणि किंमत','वरून भाज्या निवडा.','किलो','एकूण रक्कम (₹)','एकूण','सर्व खरेदी जतन करा','हा फॉर्म Telegram बॉटमधून उघडा.','निवडलेल्या सर्व भाज्यांचे वजन व किंमत भरा.','भाजी निवडलेली नाही.','Telegram द्वारे पाठवत आहे…','Telegram ही माहिती बॉटला पाठवेल.','माहिती Google Sheets मध्ये बॉट जतन करेल.'],
+    hi:['🛒 आज की खरीद','सब्जियाँ चुनें, किलो और कुल कीमत भरें, फिर एक साथ सेव करें।','1. सब्जियाँ चुनें','सब्जी खोजें…','2. मात्रा और कीमत','ऊपर से सब्जियाँ चुनें।','किलो','कुल कीमत (₹)','कुल','सभी खरीद सेव करें','फ़ॉर्म को Telegram बॉट के बटन से खोलें।','हर चुनी सब्जी का वजन और कीमत भरें।','कोई सब्जी नहीं चुनी।','Telegram के जरिए भेज रहे हैं…','Telegram आपकी खरीद बॉट को भेजेगा।','डेटा Google Sheets में बॉट सेव करेगा।'],
+    gu:['🛒 આજની ખરીદી','શાક પસંદ કરો, કિલો અને કુલ કિંમત ભરો, પછી બધું સાચવો.','૧. શાક પસંદ કરો','શાક શોધો…','૨. જથ્થો અને કિંમત','ઉપરથી શાક પસંદ કરો.','કિલો','કુલ કિંમત (₹)','કુલ','બધી ખરીદી સાચવો','ફોર્મ Telegram બોટના બટનથી ખોલો.','દરેક પસંદ કરેલ શાકનો જથ્થો અને કિંમત ભરો.','કોઈ શાક પસંદ નથી.','Telegram મારફતે મોકલી રહ્યા છીએ…','Telegram માહિતી બોટને મોકલશે.','Google Sheets માં બોટ રેકોર્ડ સાચવશે.']
+  };
+  const T=texts[lang];
+  const $=id=>document.getElementById(id);
+  const selected=new Map();
+  const label=item=>item[langIndex[lang]];
+  const fmt=n=>'₹'+n.toLocaleString('en-IN',{maximumFractionDigits:2});
+  document.documentElement.lang=lang;
+  ['heading','intro','selectLabel','detailLabel','empty','totalLabel','hint'].forEach((id,i)=>$(id).textContent=[T[0],T[1],T[2],T[4],T[5],T[8],T[15]][i]);
+  $('search').placeholder=T[3];$('save').textContent=T[9];
+  function showChoices(){
+    const term=$('search').value.trim().toLocaleLowerCase();$('choices').replaceChildren();
+    catalog.filter(v=>v.slice(1).some(n=>n.toLocaleLowerCase().includes(term))).forEach(v=>{
+      const b=document.createElement('button');b.type='button';b.className='choice'+(selected.has(v[0])?' active':'');
+      b.textContent=(selected.has(v[0])?'✓ ':'+ ')+label(v);
+      b.addEventListener('click',()=>{if(selected.has(v[0]))selected.delete(v[0]);else selected.set(v[0],{q:'',a:''});render();});
+      $('choices').append(b);
+    });
+  }
+  function field(text,value,onChange){
+    const l=document.createElement('label');l.textContent=text;
+    const inp=document.createElement('input');inp.type='number';inp.min='0.01';inp.step='0.01';inp.inputMode='decimal';inp.placeholder='0';inp.value=value;
+    inp.addEventListener('input',()=>onChange(inp.value));l.append(inp);return l;
+  }
+  function renderItems(){
+    $('items').replaceChildren();
+    if(!selected.size){const d=document.createElement('div');d.className='empty';d.textContent=T[5];$('items').append(d);return;}
+    for(const [key,v] of selected){
+      const entry=catalog.find(x=>x[0]===key),d=document.createElement('div');d.className='item';
+      const h=document.createElement('div');h.className='itemhead';const strong=document.createElement('strong');strong.textContent=label(entry);
+      const del=document.createElement('button');del.className='remove';del.type='button';del.textContent='✕';del.addEventListener('click',()=>{selected.delete(key);render();});h.append(strong,del);
+      const f=document.createElement('div');f.className='fields';
+      f.append(field(T[6],v.q,x=>{v.q=x;refreshTotal();}),field(T[7],v.a,x=>{v.a=x;refreshTotal();}));
+      d.append(h,f);$('items').append(d);
+    }
+  }
+  const positive=v=>v!==''&&Number.isFinite(Number(v))&&Number(v)>0&&Number(v)<=1e7&&Math.abs(Math.round(Number(v)*100)-Number(v)*100)<1e-6;
+  function refreshTotal(){
+    const total=[...selected.values()].reduce((n,v)=>n+(positive(v.a)?Number(v.a):0),0);
+    $('total').textContent=fmt(total);
+    $('save').disabled=!selected.size||![...selected.values()].every(v=>positive(v.q)&&positive(v.a));
+  }
+  function render(){showChoices();renderItems();refreshTotal();}
+  $('search').addEventListener('input',showChoices);
+  $('save').addEventListener('click',()=>{
+    $('status').textContent='';
+    if(!selected.size){$('status').textContent=T[12];return;}
+    if(![...selected.values()].every(v=>positive(v.q)&&positive(v.a))){$('status').textContent=T[11];return;}
+    if(!tg||typeof tg.sendData!=='function'||!tg.platform||tg.platform==='unknown'){$('status').textContent=T[10];return;}
+    const arr=[...selected.entries()].map(([k,v])=>({k,q:Number(v.q),a:Number(v.a)}));
+    let nonce='';
+    if(window.crypto?.getRandomValues){const bytes=new Uint8Array(12);crypto.getRandomValues(bytes);nonce=Array.from(bytes,b=>b.toString(16).padStart(2,'0')).join('');}
+    else { $('status').textContent='Secure browser random generator unavailable.';return; }
+    const packet=JSON.stringify({kind:'vegetable_bulk_v1',batch:nonce,items:arr});
+    if(new TextEncoder().encode(packet).length>4096){$('status').textContent='Too much data (Telegram 4096-byte limit). Split into two purchases.';return;}
+    $('save').disabled=true;$('status').textContent=T[13];
+    try{tg.sendData(packet);}catch(e){$('status').textContent=String(e.message||e);$('save').disabled=false;}
+  });
+  if(tg){tg.ready();tg.expand();}
+  render();
+})();
+</script>
+</body>
+</html>
